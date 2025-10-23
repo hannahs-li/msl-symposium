@@ -1,0 +1,246 @@
+---
+title: "Public Trust on Effective Pandemic Management"
+subtitle: "Health and Human Rights (LS 395)"
+author: "Hannah Li"
+format:
+  html:
+    toc: true
+    embed-resources: true
+    code-fold: show
+    link-external-newwindow: true
+    fig-dpi: 300
+execute:
+  warning: false
+from: markdown+emoji 
+editor_options: 
+  chunk_output_type: console
+---
+
+## Overview
+Comparative study between the US and Canada
+
+
+## Establishing Effect of Trust on Pandemic Response Success Measures
+Trust: in the government, journalists, doctors and nurses, and scientists
+
+Pandemic Response Success Measures: 
+- cumulative excess deaths, vaccination, total deaths/million, total cases/million (as of 2024)
+
+```{r}
+# load packages 
+library(tidymodels)
+library(tidyverse)
+library(here)
+library(patchwork)
+library(ggcorrplot)
+```
+
+```{r}
+# load and clean data ----
+## general covid data ----
+compact <- read_csv(here("data/compact.csv"))
+
+compact_clean <- compact |> 
+  janitor::clean_names() |> 
+  filter(date == "2024-12-31") |> 
+  select(country, 
+         total_cases, 
+         total_cases_per_million,
+         total_deaths, 
+         total_deaths_per_million, 
+         hospital_beds_per_thousand,
+         human_development_index)
+
+# add vaccination rate per country 
+regions_to_exclude <- c(
+  "World", "Africa", "Asia", "Europe", "European Union (27)",
+  "High-income countries", "Low-income countries", 
+  "Lower-middle-income countries", "Upper-middle-income countries",
+  "North America", "South America", "Oceania", "Asia excl. China",
+  "World excl. China", "World excl. China and South Korea", "World excl. China, South Korea, Japan and Singapore"
+)
+
+vaccin <- read_csv(here("data/covid-19-vaccine-doses-administered-per-100-people.csv")) |> 
+  janitor::clean_names() |> 
+  filter(!entity %in% regions_to_exclude) |> 
+  group_by(entity) |> 
+  slice_max(order_by = covid_19_doses_cumulative_per_hundred, n = 1, with_ties = FALSE) |> 
+  ungroup() |> 
+  mutate(country = entity) |> 
+  select(country, covid_19_doses_cumulative_per_hundred)
+
+
+# add vaccine data 
+vax <- read_csv(here("data/covid-vaccines-by-country-2025.csv")) |> 
+  janitor::clean_names() |> 
+  rename(pctpop_1dose = covid_vaccines_pct_of_pop_who_took_at_least1dose_pct_year_free,
+         pctpop_primary_series = covid_vaccines_pct_of_pop_who_completed_primary_series_pct_year_free, 
+         pctpop_booster = covid_vaccines_pct_of_pop_who_took1or_more_booster_pct_year_free) |>
+  select(country, pctpop_1dose, pctpop_primary_series, pctpop_booster)
+         
+# add cumulative excess deaths 
+excess_deaths <- read_csv(here("data/excess-deaths-cumulative-economist-single-entity.csv")) |> 
+  janitor::clean_names() |> 
+  filter(!entity %in% regions_to_exclude) |> 
+  group_by(entity) |> 
+  mutate(country = entity) |> 
+  slice_max(order_by = cumulative_excess_deaths_central_estimate, n = 1, with_ties = FALSE) |> 
+  ungroup() |> 
+  select(country, cumulative_excess_deaths_central_estimate)
+
+# add political regime type 
+political_regime <- read_csv(here("data/political_regime.csv")) |> 
+  janitor::clean_names() |> 
+  filter(year == 2024) |> 
+  rename(country = entity) |> 
+  mutate(political_regime = factor(political_regime, 
+                                      levels = c(0, 1, 2, 3),
+                                      labels = c("close autocracy",
+                                                 "electoral autocracy", 
+                                                 "electoral democracy", 
+                                                 "liberal democracy"))) |> 
+  select(country, political_regime)
+
+# add trust 
+global_trust <- read_csv(here("data/global_trust_rate.csv")) |> 
+  janitor::clean_names() 
+
+# add mask usage 
+masks <- read_csv(here("data/data_download_file_best_masks_2023.csv")) |> 
+  janitor::clean_names() |> 
+  filter(date == "2023-04-01") |> 
+  rename(country = location_name) |> 
+  select(-version_name, -date, -location_id, -cumulative_deaths, -daily_deaths, -cumulative_cases, -cumulative_hospitalizations, -cumulative_deaths_unscaled, -daily_deaths_unscaled, -daily_cases)
+  
+ 
+# combine EVERYTHING 
+data_final <- compact_clean |> left_join(vax) |> left_join(excess_deaths) |> left_join(political_regime) |> left_join(global_trust) |> left_join(masks)
+
+# save data 
+save(data_final, file = here("data/data_final.rda"))
+
+```
+
+# Correlation Plot on Government Trust 
+
+```{r}
+
+# corr plot 
+cor_data <- data_final |> 
+  select(government,
+         scientist, 
+         doctor_and_nurses, 
+         journalist,
+         total_cases_per_million,
+         total_deaths_per_million,
+         cumulative_excess_deaths_central_estimate,
+         pctpop_1dose, 
+         pctpop_primary_series, 
+         pctpop_booster, 
+         infection_detection,
+         mask_use_mean) |> 
+  drop_na() |> 
+  rename("Trust in Government" = government, 
+         "Trust in Science" = scientist,
+         "Trust in Medical Professionals" = doctor_and_nurses, 
+         "Trust in Journalism"  = journalist, 
+         "Total Cases per M" = total_cases_per_million,
+         "Total Deaths per M" = total_deaths_per_million,
+         "Total Excess Deaths" = cumulative_excess_deaths_central_estimate,
+         "Percentage of Population with 1+ Vax Dose" = pctpop_1dose, 
+         "Percentage of Population Completed Primary Series" = pctpop_primary_series, 
+         "Percentage of Population with 1+ Booster Shot"= pctpop_booster,
+         "Infection Detection" = infection_detection,
+         "Average Mask Use" = mask_use_mean)
+
+cor_matrix <- cor(cor_data) 
+
+corr_plot <- ggcorrplot(
+  cor_matrix,
+  method = "square",
+  type = "lower",
+  lab = TRUE,
+  lab_size = 3,
+  title = "Correlation Matrix: Trust, Vaccination & Pandemic Outcomes",
+  colors = c("#4575b4", "white", "#d73027"),  # blue to red scale
+  tl.cex = 10,
+  tl.srt = 45,          # Rotate axis labels
+  show.diag = TRUE     
+) +
+  theme_minimal(base_size = 12) + 
+  labs(x = NULL, y = NULL, caption = "Sources: Institute for Health Metrics and Evaluation, World Values Survey, World Health Organization, The Economist, V-Dem, Our World in Data") + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+    axis.text.y = element_text(size = 10),
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 9)
+  )
+
+corr_plot
+
+```
+
+## Analysis 
+Trust Variables
+Scientist ↔ Doctor and Nurses: 0.88 → very strong positive trust correlation
+
+Government ↔ Journalists: 0.69 → strong correlation in public trust
+
+Government ↔ Doctor and Nurses: 0.61 → moderately strong
+
+Trust ↔ COVID Outcomes
+Government ↔ Total Deaths per Million: -0.35 → Moderate negative correlation
+➤ Higher trust in government is associated with fewer deaths.
+
+Scientist ↔ Vaccine Uptake: 0.59 → Moderate-to-strong positive correlation
+➤ More trust in scientists = more vaccination.
+
+Doctor and Nurses ↔ Vaccine Uptake: 0.66 → Strong positive correlation
+
+COVID Metrics ↔ Each Other
+Cases ↔ Deaths per Million: 0.51 → Moderate correlation
+➤ More cases generally lead to more deaths.
+
+Deaths ↔ Excess Deaths: -0.06 → Weak/no correlation
+➤ Suggests that reported COVID deaths don’t fully capture excess mortality in some countries.
+
+
+# Explicit Comparison between the US and Canada 
+```{r}
+
+us_canada_data <- data_final |> 
+  filter(country %in% c("Canada", "United States"))
+
+# Bar plot comparison between trust levels 
+us_canada_data_long <- us_canada_data |> 
+  pivot_longer(cols = government:traditional_healers, names_to = "institution", values_to = "trust")
+
+ggplot(us_canada_data_long, aes(x = institution, y = trust, fill = country)) +
+  geom_col(position = "dodge") +
+  labs(title = "Trust in Institutions: Canada vs United States", y = "Trust (Percent of Popoulation)", x = "Institution", caption = "Source: World Values Survey (2024)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+# FIND PANDEMIC DIFFERENCE GRAPHS BT US AND CANADA 
+```
+
+
+# Machine Learning because I kinda hate myself but that's okay
+```{r}
+load(here("figures_tables/rf_pred_plot.rda"))
+rf_pred_plot
+
+load(here("figures_tables/rsq_metrics.rda"))
+rsq_metrics
+
+load(here("figures_tables/rf_rsq_plot.rda"))
+rf_rsq_plot
+
+load(here("figures_tables/pred_actual_plot.rda"))
+pred_actual_plot
+
+```
+
